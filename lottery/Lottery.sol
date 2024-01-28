@@ -15,9 +15,6 @@ contract Lottery {
 
     event LotteryTicketBought(uint ticketNo);
 
-    // todo: pay instead of emitting event
-    event RedeemRewards(address receiver, uint256 amount);
-
     error TooEarly(uint timeEnding, uint timeNow);
     error TooLate(uint timeEnding, uint timeNow);
     error InsufficientPayment(uint32 price);
