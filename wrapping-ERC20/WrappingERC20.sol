@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {FHE, euint32, inEuint32} from "@fhenixprotocol/contracts/FHE.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { FHE, euint32, inEuint32 } from "@fhenixprotocol/contracts/FHE.sol";
 import { Permissioned, Permission } from "@fhenixprotocol/contracts/access/Permission.sol";
 
-//import "./utils/Permission.sol";
+error ErrorInsufficientFunds();
 
 contract WrappingERC20 is ERC20, Permissioned {
 
@@ -13,9 +13,9 @@ contract WrappingERC20 is ERC20, Permissioned {
     mapping(address => euint32) internal _encBalances;
     euint32 private totalEncryptedSupply = FHE.asEuint32(0);
 
-    constructor(string memory name, string memory symbol) 
+    constructor(string memory name, string memory symbol)
         ERC20(
-            bytes(name).length == 0 ? "FHE Token" : name, 
+            bytes(name).length == 0 ? "FHE Token" : name,
             bytes(symbol).length == 0 ? "FHE" : symbol
         )
     {
@@ -24,9 +24,8 @@ contract WrappingERC20 is ERC20, Permissioned {
     }
 
     function wrap(uint32 amount) public {
-        require(balanceOf(msg.sender) >= amount);
-        if (!FHE.isInitialized(_encBalances[msg.sender])) {
-            _encBalances[msg.sender] = FHE.asEuint32(0);
+        if (balanceOf(msg.sender) < amount) {
+            revert ErrorInsufficientFunds();
         }
 
         _burn(msg.sender, amount);
@@ -36,13 +35,14 @@ contract WrappingERC20 is ERC20, Permissioned {
     }
 
     function unwrap(uint32 amount) public {
-        require(FHE.isInitialized(_encBalances[msg.sender]));
+        euint32 encAmount = FHE.asEuint32(amount);
 
-        FHE.req(_encBalances[msg.sender].gt(FHE.asEuint32(amount)));
-        euint32 eAmount = FHE.asEuint32(amount);
-        _encBalances[msg.sender] = _encBalances[msg.sender] - eAmount;
-        totalEncryptedSupply = totalEncryptedSupply - eAmount;
-        _mint(msg.sender, amount);
+        euint32 amountToUnwrap = FHE.select(_encBalances[msg.sender].gt(encAmount), FHE.asEuint32(0), encAmount);
+
+        _encBalances[msg.sender] = _encBalances[msg.sender] - amountToUnwrap;
+        totalEncryptedSupply = totalEncryptedSupply - amountToUnwrap;
+
+        _mint(msg.sender, FHE.decrypt(amountToUnwrap));
     }
 
     function mint(uint256 amount) public {
@@ -54,10 +54,10 @@ contract WrappingERC20 is ERC20, Permissioned {
         if (!FHE.isInitialized(_encBalances[msg.sender])) {
             _encBalances[msg.sender] = amount;
         } else {
-            _encBalances[msg.sender] = FHE.add(_encBalances[msg.sender], amount);
+            _encBalances[msg.sender] = _encBalances[msg.sender] + amount;
         }
-        
-        totalEncryptedSupply = FHE.add(totalEncryptedSupply, amount);
+
+        totalEncryptedSupply = totalEncryptedSupply + amount;
     }
 
     function transferEncrypted(address to, inEuint32 calldata encryptedAmount) public {
@@ -72,15 +72,11 @@ contract WrappingERC20 is ERC20, Permissioned {
         // Transfers an encrypted amount.
     function _transferImpl(address from, address to, euint32 amount) internal {
         // Make sure the sender has enough tokens.
-        FHE.req(amount.lte(_encBalances[from]));
-
-        if (!FHE.isInitialized(_encBalances[to])) {
-            _encBalances[to] = FHE.asEuint32(0);
-        }
+        euint32 amountToSend = FHE.select(amount.lt(_encBalances[from]), amount, FHE.asEuint32(0));
 
         // Add to the balance of `to` and subract from the balance of `from`.
-        _encBalances[to] = _encBalances[to] + amount;
-        _encBalances[from] = _encBalances[from] - amount;
+        _encBalances[to] = _encBalances[to] + amountToSend;
+        _encBalances[from] = _encBalances[from] - amountToSend;
     }
 
     function balanceOfEncrypted(
