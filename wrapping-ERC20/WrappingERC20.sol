@@ -4,7 +4,7 @@ pragma solidity ^0.8.19;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { FHE, euint32, inEuint32 } from "@fhenixprotocol/contracts/FHE.sol";
-import { Permissioned, Permission } from "@fhenixprotocol/contracts/access/Permission.sol";
+import { Permissioned, Permission } from "@fhenixprotocol/contracts/access/Permissioned.sol";
 
 error ErrorInsufficientFunds();
 
@@ -12,7 +12,9 @@ contract WrappingERC20 is ERC20, Permissioned {
 
     // A mapping from address to an encrypted balance.
     mapping(address => euint32) internal _encBalances;
-    euint32 private totalEncryptedSupply = FHE.asEuint32(0);
+    mapping(address => mapping(address => euint32)) internal _allowed;
+
+    euint32 internal totalEncryptedSupply = FHE.asEuint32(0);
 
     constructor(string memory name, string memory symbol)
         ERC20(
@@ -23,6 +25,41 @@ contract WrappingERC20 is ERC20, Permissioned {
         // Mint 100 tokens to msg.sender
         // _mint(msg.sender, 100 * 10 ** uint(decimals()));
     }
+
+    function _allowanceEncrypted(address owner, address spender) public view virtual returns (euint32) {
+        return _allowed[owner][spender];
+    }
+    function allowanceEncrypted(
+        address spender,
+        Permission calldata permission
+    ) public view virtual onlySender(permission) returns (string memory) {
+        return FHE.sealoutput(_allowanceEncrypted(msg.sender, spender), permission.publicKey);
+    }
+
+    function approveEncrypted(address spender, inEuint32 calldata value) public virtual returns (bool) {
+        _approve(msg.sender, spender, FHE.asEuint32(value));
+        return true;
+    }
+
+    function _approve(address owner, address spender, euint32 value) internal {
+        if (owner == address(0)) {
+            revert ERC20InvalidApprover(address(0));
+        }
+        if (spender == address(0)) {
+            revert ERC20InvalidSpender(address(0));
+        }
+        _allowed[owner][spender] = value;
+    }
+
+    function _spendAllowance(address owner, address spender, euint32 value) internal virtual returns (euint32) {
+        euint32 currentAllowance = _allowanceEncrypted(owner, spender);
+        euint32 spent = FHE.min(currentAllowance, value);
+        _approve(owner, spender, (currentAllowance - spent));
+
+        return spent;
+    }
+
+
 
     function wrap(uint32 amount) public {
         if (balanceOf(msg.sender) < amount) {
@@ -73,7 +110,7 @@ contract WrappingERC20 is ERC20, Permissioned {
         // Transfers an encrypted amount.
     function _transferImpl(address from, address to, euint32 amount) internal {
         // Make sure the sender has enough tokens.
-        euint32 amountToSend = FHE.select(amount.lt(_encBalances[from]), amount, FHE.asEuint32(0));
+        euint32 amountToSend = FHE.select(amount.lte(_encBalances[from]), amount, FHE.asEuint32(0));
 
         // Add to the balance of `to` and subract from the balance of `from`.
         _encBalances[to] = _encBalances[to] + amountToSend;
@@ -81,15 +118,15 @@ contract WrappingERC20 is ERC20, Permissioned {
     }
 
     function balanceOfEncrypted(
-        Permission calldata permission
-    ) public view onlySignedPublicKey(permission) returns (bytes memory) {
-        return FHE.sealoutput(_encBalances[msg.sender], permission.publicKey);
+        address account, Permission memory auth
+    ) virtual public view onlyPermitted(auth, account) returns (string memory) {
+        return _encBalances[account].seal(auth.publicKey);
     }
 
     function getEncryptedTotalSupply(
         Permission calldata permission
-    ) public view onlySignedPublicKey(permission) returns (bytes memory) {
-        return FHE.sealoutput(totalEncryptedSupply, permission.publicKey);
+    ) public view onlySender(permission) returns (string memory) {
+        return totalEncryptedSupply.seal(permission.publicKey);
     }
 
 }
