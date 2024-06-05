@@ -8,16 +8,13 @@ import "@fhenixprotocol/contracts/access/Permission.sol";
 contract Voting is Permissioned {
     uint8 internal constant MAX_OPTIONS = 4;
 
-    // Pre-compute these to prevent unnecessary gas usage for the users
-    // euint16 internal _zero = FHE.asEuint16(0);
-    // euint16 internal _one = FHE.asEuint16(1);
     euint32 internal _u32Sixteen = FHE.asEuint32(16);
     euint8[MAX_OPTIONS] internal _encOptions = [FHE.asEuint8(0), FHE.asEuint8(1), FHE.asEuint8(2), FHE.asEuint8(3)];
 
     string public proposal;
     string[] public options;
     uint public voteEndTime;
-    euint16[MAX_OPTIONS] internal _tally; // Since every vote is worth 1, I assume we can use a 16-bit integer
+    euint16[MAX_OPTIONS] internal _tally;
 
     euint8 internal _winningOption;
     euint16 internal _winningTally;
@@ -25,7 +22,7 @@ contract Voting is Permissioned {
     mapping(address => euint8) internal _votes;
 
     constructor(string memory _proposal, string[] memory _options, uint votingPeriod) {
-        require(options.length <= MAX_OPTIONS, "too many options!");
+        require(_options.length <= MAX_OPTIONS, "too many options!");
 
         proposal = _proposal;
         options = _options;
@@ -39,7 +36,7 @@ contract Voting is Permissioned {
         _requireValid(encryptedVote);
 
         _votes[msg.sender] = encryptedVote;
-        _addToTally(encryptedVote /* , _one */);
+        _addToTally(encryptedVote);
     }
 
     function finalize() public {
@@ -59,11 +56,9 @@ contract Voting is Permissioned {
         return (FHE.decrypt(_winningOption), FHE.decrypt(_winningTally));
     }
 
-    function getUserVote(
-        Permission memory signature
-    ) public view onlySignedPublicKey(signature) returns (bytes memory) {
+    function getUserVote(Permission memory signature) public view onlySignedPublicKey(signature) returns (bytes memory) {
         require(FHE.isInitialized(_votes[msg.sender]), "no vote found!");
-        return FHE.sealoutput(_votes[msg.sender], signature.publicKey);
+        return abi.encodePacked(FHE.sealoutput(_votes[msg.sender], signature.publicKey));
     }
 
     function _requireValid(euint8 encryptedVote) internal view {
@@ -72,16 +67,10 @@ contract Voting is Permissioned {
         FHE.req(isValid);
     }
 
-    function _addToTally(euint8 option /* , euint16 amount */) internal {
-        // We don't want to leak the user's vote, so we have to change the tally of every option.
-        // So for example, if the user voted for option 1:
-        // tally[0] = tally[0] + enc(0)
-        // tally[1] = tally[1] + enc(1)
-        // etc ..
+    function _addToTally(euint8 option) internal {
         for (uint8 i = 0; i < options.length; i++) {
-            // euint16 amountOrZero = FHE.select(option.eq(_encOptions[i]), _one, _zero);
-            ebool amountOrZero = option.eq(_encOptions[i]); // `eq()` result is known to be enc(0) or enc(1)
-            _tally[i] = _tally[i] + amountOrZero.toU16(); // `eq()` result is known to be enc(0) or enc(1)
+            ebool amountOrZero = option.eq(_encOptions[i]);
+            _tally[i] = _tally[i] + amountOrZero.toU16();
         }
     }
 }
