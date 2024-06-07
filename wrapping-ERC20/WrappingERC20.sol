@@ -22,7 +22,5 @@ contract ExampleToken is FHERC20 {
             } else {
                 _encBalances[msg.sender] = _encBalances[msg.sender] + amount;
             }
-
-            totalEncryptedSupply = totalEncryptedSupply + amount;
         }        
 }
